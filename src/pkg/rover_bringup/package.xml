@@ -34,7 +34,6 @@
   <build_depend>nav2_bringup</build_depend>
   <build_depend>nav2_msgs</build_depend>
   <build_depend>slam_toolbox</build_depend>
-  <build_depend>odometry_msgs</build_depend>
   <build_depend>rclcpp</build_depend>
   <build_depend>rclpy</build_depend>
   <build_depend>sensor_msgs</build_depend>
@@ -58,7 +57,6 @@
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
-  <exec_depend>odometry_msgs</exec_depend>
   <exec_depend>rclcpp</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

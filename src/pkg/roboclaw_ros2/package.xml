@@ -55,8 +55,8 @@
   <build_depend>rclpy</build_depend>
   <build_depend>std_msgs</build_depend>
   <build_depend>tf2</build_depend>
-  <build_depend>message_generation</build_depend>
-  <build_depend>message_runtime</build_depend>
+  <!-- <build_depend>message_generation</build_depend> -->
+  <!-- <build_depend>message_runtime</build_depend> -->
   <build_export_depend>geometry_msgs</build_export_depend>
   <build_export_depend>nav_msgs</build_export_depend>
   <build_export_depend>rclcpp</build_export_depend>
@@ -69,8 +69,8 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2</exec_depend>
-  <exec_depend>message_generation</exec_depend>
-  <exec_depend>message_runtime</exec_depend>
+  <!-- <exec_depend>message_generation</exec_depend> -->
+  <!-- <exec_depend>message_runtime</exec_depend> -->
   <exec_depend>ros2launch</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group> 
