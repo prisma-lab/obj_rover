@@ -196,7 +196,7 @@ class Yolov11Node(Node):
             # Predict on image "bg_removed"
             results = self.yolo.predict(
                 source=np_color_image, #bg_removed
-                classes=[ 9, 10, 58, 77], #oggetti Leonardo: traffic light, fire hydrant, potted plant , teddy bear
+                classes=[32, 77], #[ 9, 10, 58, 77], #oggetti Leonardo: traffic light, fire hydrant, potted plant , teddy bear
                 show=False,
                 verbose=False,
                 stream=False,

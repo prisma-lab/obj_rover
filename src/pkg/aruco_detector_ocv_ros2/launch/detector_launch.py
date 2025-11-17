@@ -24,7 +24,7 @@ def generate_launch_description():
         DeclareLaunchArgument('min_prec_value', default_value='80'),
         DeclareLaunchArgument('enable_blur', default_value='true'),
         DeclareLaunchArgument('is_grey', default_value='false'),
-        DeclareLaunchArgument('min_id', default_value='100'),
+        DeclareLaunchArgument('min_id', default_value='1'),
         DeclareLaunchArgument('max_id', default_value='300'),
         DeclareLaunchArgument('publish_tf', default_value='true'),
 

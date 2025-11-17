@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+    <Domain id="any">
+        <General>
+            <!-- Metodo 1: Usa il nome dell'interfaccia -->
+            <!-- <Interfaces>
+                <NetworkInterface name="eth0" priority="default" multicast="default" />
+            </Interfaces> -->
+            
+            <!-- Metodo 2 (alternativo): Usa l'IP dell'interfaccia -->
+            <Interfaces>
+                <NetworkInterface address="192.168.3.10" priority="default" multicast="default" />
+            </Interfaces>
+            
+            <AllowMulticast>true</AllowMulticast>
+            <MaxMessageSize>65500B</MaxMessageSize>
+            <EnableMulticastLoopback>true</EnableMulticastLoopback>
+        </General>
+        <Discovery>
+            <ParticipantIndex>auto</ParticipantIndex>
+            <!-- Aumenta questo valore per permettere più nodi -->
+            <MaxAutoParticipantIndex>1000</MaxAutoParticipantIndex>
+            <!-- Puoi anche specificare peer espliciti se necessario -->
+            <!-- <Peers>
+                <Peer address="192.168.0.200"/>
+            </Peers> -->
+        </Discovery>
+        <Internal>
+            <Watermarks>
+                <WhcHigh>500kB</WhcHigh>
+            </Watermarks>
+        </Internal>
+    </Domain>
+</CycloneDDS>

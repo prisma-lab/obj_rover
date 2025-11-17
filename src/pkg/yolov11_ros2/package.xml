@@ -15,14 +15,14 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>builtin_interfaces</depend>
   <build_depend>cv_bridge</build_depend>
-  <!-- <depend>open3d</depend> -->
+  <depend>open3d</depend>
 
   <!-- Python dependencies -->
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-torch</exec_depend>
   <exec_depend>python3-torchvision</exec_depend>
-  <exec_depend>ultralytics</exec_depend>
+  <!-- <exec_depend>ultralytics</exec_depend> -->
   <!-- <exec_depend>open3d</exec_depend> -->
   <exec_depend>cv_bridge</exec_depend>
 

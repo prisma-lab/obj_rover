@@ -2,12 +2,13 @@
 
   <include file="$(find-pkg-share rover_description_pkg)/launch/new_rover_description.launch.py"/>
   <include file="$(find-pkg-share roboclaw_ros2)/launch/diffdrive.launch"/>
-  <include file="$(find-pkg-share rover_bringup)/launch/rplidar_s1.launch.py"/>
+  <!-- <include file="$(find-pkg-share rover_bringup)/launch/rplidar_s1.launch.py"/> -->
 
   <include file="$(find-pkg-share rover_bringup)/launch/rs_camera.launch.py"/>
+  <include file="$(find-pkg-share rover_bringup)/launch/livox_launch.py"/>
 
   <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
-    args="2.20 7.78 0 0 0 0 map rover/map" />
+    args="0.0 2.0 0 0 0 0 map rover/map" />
 
   <!-- <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
     args="2.20 7.78 0 0 0 0 rover/odom rover/base_footprint" /> -->
