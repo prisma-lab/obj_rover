@@ -1,32 +1,105 @@
 <!-- GETTING STARTED -->
-## Overview
-- This package is being created to add necessary features and improvements for our robots, specifically for ros2. This package is a ros2 porting of a indoor navigation project and implement integration with Slam and Navigation ROS2 package.
+# PRISMA-CoRE: UGV Software Stack
 
-  
+[![ROS 2 Humble](https://img.shields.io/badge/ROS%202-Humble-blue)](https://docs.ros.org/en/humble/index.html)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 
-- This package is exclusively built for ROS2. It is being tested on Ubuntu 20.04 with ROS2-Humble.
+This repository hosts the complete software stack for the Unmanned Ground Vehicle (UGV) developed within the **PRISMA-CoRE** (Cooperative Robotic Exploration) research framework. The system is designed to operate in GPS-denied environments, providing autonomous capabilities for navigation, mapping (SLAM), and advanced perception, both in standalone mode and as part of a heterogeneous team (UAV–UGV collaboration).
 
-  
+## 1. System Architecture
 
-  
+The rover's software architecture is based on ROS 2 Humble and follows a modular approach that clearly separates perception, planning, and control. The data flow integrates multiple sensors (LiDAR, RGB-D camera, wheel odometry) to ensure operational robustness.
 
-- All the branches of this package are relative to a specific Sensor integration.
+```mermaid
+graph TD
+    %% Style Definitions
+    classDef hardware fill:#dda0dd,stroke:#333,stroke-width:2px,color:black;
+    classDef rosNode fill:#dae8fc,stroke:#6c8ebf,stroke-width:2px,color:black;
+    classDef px4 fill:#d5e8d4,stroke:#82b366,stroke-width:2px,color:black;
+    classDef exec fill:#ffffff,stroke:#000000,stroke-width:2px,color:black;
+    classDef costmapG fill:#f8cecc,stroke:#b85450,stroke-width:2px,color:black;
+    classDef costmapL fill:#ffe6cc,stroke:#d6b656,stroke-width:2px,color:black;
 
-<div align="center">
-    <img src="docs/real_rover.png" width="75%"/>
-</div>
+    %% Hardware Nodes
+    subgraph "Hardware Layers"
+        direction LR
+        Lidar["3D Lidar"]:::hardware
+        Cam["RGB-D Camera"]:::hardware
+        UGV["UGV Platform"]:::hardware
+    end
 
-## Table of Contents
+    %% ROS2 Nodes
+    subgraph "Perception & Mapping"
+        direction TB
+        Rtab["RTAB-MAP"]:::rosNode
+        Detect["Marker & Object<br>Detection"]:::rosNode
+    end
+    
+    subgraph "Navigation & Control"
+        direction TB
+        subgraph NAV2_Stack [NAV2 Stack]
+            direction TB
+            GC["Global Costmap"]:::costmapG
+            LC["Local Costmap"]:::costmapL
+        end
+        Driver["Motor Driver<br>(roboclaw_ros2)"]:::px4
+    end
 
-1. [Prerequisites](#Prerequisites)
-2. [Packages used in Dockerfile](#Packages-used-in-Dockerfile)
-3. [Image Compilation and Execution](#Image-Compilation-and-Execution)
-4. [Usage](#Usage)
-5. [What is launched with this?](#What-is-launched-with-this?)
-6. [Navigation2 and Slam Toolbox Configuration](#Navigation2-and-Slam-Toolbox-Configuration)
+    subgraph "Mission Logic"
+        direction TB
+        Manager["Move Manager"]:::rosNode
+        Exec["Executive System"]:::exec
+    end
 
+    %% Connections
+    Cam --> Rtab
+    Cam --> Detect
+    Driver -- "Wheel Odom" --> Rtab
+    Driver -- "Wheel Odom" --> NAV2_Stack
+    Rtab -- "/rover/map" --> GC
+    Lidar -- "LaserScan" --> LC
+    
+    NAV2_Stack -- "/rover/cmd_vel" --> Driver
+    Driver --> UGV
+    
+    Manager -- "/goal" --> NAV2_Stack
+    NAV2_Stack -- "/status" --> Manager
+    
+    Exec <==> Manager
+    Detect -- "/result/image" --> Exec
+```
 
-## Prerequisites
+### Key Components
+*   **SLAM & Localization**: **RTAB-Map** is at the core of localization, fusing visual (RGB-D) and inertial/wheel odometry for robust pose estimation even without GPS.
+*   **Navigation**: Based on **Nav2**, featuring:
+    *   *Global Planner*: `NavfnPlanner` for optimal long-range pathfinding on the static map.
+    *   *Local Planner*: `TEB Local Planner`, optimized for the rover's skid-steer kinematics and dynamic obstacle avoidance.
+*   **Perception**: 
+    *   `yolov11_ros2` for real-time object recognition.
+    *   `aruco_detector_ocv_ros2` for fiducial marker pose estimation.
+*   **Mission Control**: A cognitive **Executive System** orchestrates high-level operations, communicating with the `rover_manager` node to translate abstract goals into navigation actions.
+
+## 2. Repository Structure
+
+The package organization reflects the system's modularity:
+```
+src/
+├── git/                      # External submodules and dependencies
+│   ├── costmap_converter
+│   └── teb_local_planner
+└── pkg/                      # PRISMA project-specific packages
+    ├── aruco_detector_ocv_ros2   # ArUco marker detection
+    ├── custom_explorer           # Autonomous exploration strategies
+    ├── roboclaw_ros2             # RoboClaw motor controller driver
+    ├── rover_bringup             # Main launch files and configurations
+    ├── rover_description_pkg     # URDF/Xacro models of the rover
+    ├── rover_gazebo              # Simulation environments and configurations
+    ├── rover_manager             # State and movement management node
+    ├── rplidar_ros               # 2D/3D LiDAR driver
+    └── yolov11_ros2              # YOLOv11 inference node
+```
+## 3. Prerequisites
 Before setting up the project, you have to install docker. If you already installed docker, go to the next session
 ```sh
 # Add Docker's official GPG key:
@@ -53,23 +126,6 @@ newgrp docker
 ```
 Then log out and log in.
 
-## Packages used in Dockerfile
-- kmod
-- minicom
-- screen
-- xacro
-- rviz2
-- librealsense2
-- realsense2
-- navigation2
-- nav2-bringup
-- slam-toolbox
-- rmw-cyclonedds-cpp
-- joint-state-publisher-gui
-External repositories included in this porject:
-- [TEB Local Planner](https://github.com/rst-tu-dortmund/teb_local_planner/tree/ros2-master)
-- [Aruco Marker Pose Estimation](https://github.com/AIRLab-POLIMI/ros2-aruco-pose-estimation)
-- [Costmap Converter](https://github.com/rst-tu-dortmund/costmap_converter/tree/ros2/)
 ## Image Compilation and Execution
 
 1. Clone the repo (complete the command)
@@ -98,7 +154,7 @@ docker exec -it $(docker ps -aqf "name=<CONTAINER_NAME>") bash
 3. It is recommended to check the correct time for successful image creation 
 4. All apt-get performed inside the container will be removed one che container is closed. Please add all new dependacies to the Dockerfile and rebuild the image.
    
-## Usage
+## 4. Usage
 1. Create a container using this project image on both rover PC an controller PC
 2. Set the same ROS domain ID on both rover PCs
 ```sh
@@ -119,27 +175,59 @@ ros2 launch rover_bringup rover_bringup.launch
 ```
 6. On the controller PC terminal open rviz2
 
-### What is launched with this?
-Launch files inside rover_bringup.launch: (1) The Robot Description, (2) The Robot Differential Driver, (3) Sensors Launch, and (4) SLAM and Navigation Launch.
-1. The Robot Description: responsible for publishing to the /tf topic and providing transforms between the base_link, base_footprint, and sensor links. Edit the URDF for your robot to define new frames or remove links
-2.  The Robot Differential Driver: motor controller driver, responsible for interfacing with the robot and handling velocity commands and publish wheel odometry
-3.  Sensors Launch: sensor particular launch file. 
-4.  SLAM and Navigation Launch: files to start the slam_toolbox to actuate SLAM and the nav2 pkg for the navigation stack, both files take as input a .yaml configuration file to setup the parameters.
+### Full System Launch (Navigation + Perception)
+To start the entire stack (sensor drivers, Nav2, RTAB-Map, Manager):
+
+ros2 launch rover_bringup rover_bringup.launch
 
 
-All this launch files are available separately in the launch folder of the rover_bringup package.
+### Launching Individual Components
+If needed, you can start specific drivers separately:
 
-## Navigation2 and Slam Toolbox Configuration
-It has been provided launch files and configs for Navigation2 and Slam Toolbox. They are available in the ``rover_bringup`` package.
+*   **RealSense Camera:**
+    ```
+    ros2 launch rover_bringup rs_camera.launch.py
+    ```
+*   **Lidar:**
+    ```
+    ros2 launch rover_bringup livox_launch.py
+    ```
 
-They can be launched with the following launch commands:
+## 5. Configuration
+
+Key parameters are defined in YAML and Launch files:
+
+*   **Navigation (Nav2 & TEB):**
+    `src/pkg/rover_bringup/config/nav2_params.yaml`
+    *Here you can adjust maximum speeds, the robot's footprint, and costmap weights.*
+
+*   **SLAM (RTAB-Map):**
+    Configured via arguments in the `rtabmap.launch.py` file. Parameters include loop closure thresholds and map resolution.
+
+*   **Vision (YOLO):**
+    The `.pt` weight models and confidence thresholds are managed within the `yolov11_ros2` package.
+
+## 6. Citation
+
+If this work is useful for your research, please cite the associated PRISMA-CoRE paper:
+
+```bibtex
+@article{prisma_core_2025,
+  title     = {PRISMA-CoRE: A Cooperative Robotic Exploration Framework for GPS-denied Environments},
+  author    = {D'Angelo, Simone and Scognamiglio, Vincenzo and et al.},
+  journal   = {Drones},
+  year      = {2025},
+  publisher = {MDPI}
+}
 ```
-ros2 launch rover_bringup online_async_launch.py
-ros2 launch rover_bringup  navigation_launch.py
-```
-To change the SLAM and Navigation parameters, work on:
-- mapper_params_online_async file in the confif folder.
-- nav2_params file in the params folder. 
+
+## 7. License
+
+The source code is released under the **Apache 2.0 License**.
+
+
+
+
 
    
    
