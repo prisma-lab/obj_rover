@@ -21,10 +21,11 @@ from ultralytics.utils import ASSETS
 
 from shapely.geometry import Polygon
 from sklearn.cluster import DBSCAN
-from ultralytics import YOLO
+from ultralytics import YOLO, YOLOE
 import open3d as o3d
 import numpy as np
 import ros2_numpy
+from sensor_msgs_py import point_cloud2 as pc2
 import struct
 import time
 import json
@@ -36,7 +37,7 @@ COCO_CATEGORIES = [
     {"color": [209, 0, 151], "id": 26, "name": "handbag"},
     {"color": [188, 208, 182], "id": 27, "name": "tie"},
     {"color": [0, 220, 176], "id": 28, "name": "suitcase"},
-    {"color": [78, 180, 255], "id": 32, "name": "sports ball"},
+    {"color": [78, 180, 255], "id": 32, "name": "ball"},
     {"color": [197, 226, 255], "id": 39, "name": "bottle"},
     {"color": [171, 134, 1], "id": 40, "name": "wine glass"},
     {"color": [109, 63, 54], "id": 41, "name": "cup"},
@@ -83,6 +84,9 @@ colors = {
     }
 colors_array = np.array(list(colors.values()))
 
+prompt_to_class = {"carpenter hammer with wooden handle": "hammer",
+                   "screwdriver yellow handle silver flathead tip long chrome shaft vertical": "screwdriver"}
+
 class Realsense(Node):
 
     def __init__(self):
@@ -94,8 +98,8 @@ class Realsense(Node):
         self.pub = self.create_publisher(DetectedObjectsList, 'objects_detected', 10)
 
         # Realsense subscriptions
-        qos_profile_pc = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=3, reliability=ReliabilityPolicy.RELIABLE)
-        qos_profile_image = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=6, reliability=ReliabilityPolicy.RELIABLE)
+        qos_profile_pc = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=3, reliability=ReliabilityPolicy.BEST_EFFORT)
+        qos_profile_image = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=6, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.image_sub = message_filters.Subscriber(self, Image, '/rover/camera/color/image_raw',qos_profile=qos_profile_image)
         self.pointcloud_sub = message_filters.Subscriber(self, PointCloud2, '/rover/camera/depth/color/points',qos_profile=qos_profile_pc)
         self.ts = message_filters.ApproximateTimeSynchronizer(
@@ -113,7 +117,9 @@ class Realsense(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # YOLO setup
-        self.model = YOLO("/home/user/ros2_ws/src/pkg/obj_agent/scripts/yolo11s-seg.pt")
+        self.model = YOLOE("/home/user/ros2_ws/src/pkg/obj_agent/scripts/yoloe-11s-seg.pt")
+        self.names = ["carpenter hammer with wooden handle", "screwdriver yellow handle silver flathead tip long chrome shaft vertical"]#["bottle", "ball"]
+        self.model.set_classes(self.names)
 
         #args = dict(model="yolo11n-seg.pt", source=ASSETS)
         #self.predictor = SegmentationPredictor(overrides=args)
@@ -125,16 +131,19 @@ class Realsense(Node):
 
         # FUnction to process and publish the visual information
         self.timer = self.create_timer(0.8, self.camera)
-        self.COLOR_TO_IDX = {"red": 11, "green": 12, "blue": 13, "purple": 14, "yellow": 15, "gray": 16}
+        #self.COLOR_TO_IDX = {"red": 11, "green": 12, "blue": 13, "purple": 14, "yellow": 15, "gray": 16}
+        self.COLOR_TO_IDX = {"red": 0, "green": 1, "blue": 2, "purple": 3, "yellow": 4, "gray": 5}
 
         self.get_logger().info('Done!')
 
     def sync_callback(self, image_msg, cloud_msg):
-        # print('Data received')
+        print('Data received')
         pc = ros2_numpy.point_cloud2.point_cloud2_to_array(cloud_msg)
         self.pc = pc['xyz']
         cv_image = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='passthrough')
         self.color_image=cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        #print(f"color image shape: {self.color_image.shape}")
+
 
     def detect_and_publish(self, results):
         from_frame_rel = self.target_frame
@@ -148,13 +157,15 @@ class Realsense(Node):
             return
         
         if results[0].masks is not None:
-            print(results[0].probs)
+            print(f"probs {results[0].probs}")
             detected_objects = DetectedObjectsList()
             objetos = []
 
             _, width = self.color_image.shape[:2]
+            print(f"width {width}")
             masks = results[0].masks.xy 
             classes = results[0].boxes.cls
+            print(f"classes {classes}")
             track_ids = results[0].boxes.id
 
             for i, mask in enumerate(masks):
@@ -163,9 +174,34 @@ class Realsense(Node):
                 cv2.fillPoly(binary_mask, [np.array(mask, dtype=np.int32)], 1)
                 indices = np.argwhere(binary_mask == 1)
                 indices_1d = indices[:, 0] * width + indices[:, 1]
-                cropped_vtx = self.pc[indices_1d[::10]]
+                cropped_vtx = self.pc[indices_1d[::2]]
                 pcmask = (cropped_vtx[:,0] != 0) | (cropped_vtx[:,1] != 0) | (cropped_vtx[:,2] != 0) # Removing points placed in origin
                 cropped_vtx = cropped_vtx[pcmask,:]
+                
+                # # --- INIZIO MODIFICA ---
+                
+                # # Filtro di sicurezza: tieni solo gli indici che stanno dentro la dimensione della PointCloud
+                # # self.pc potrebbe essere più piccola dell'immagine se c'è stata decimazione o resize
+                # max_pc_size = self.pc.shape[0]
+                # # --- DEBUG ---
+                # print(f"YOLO Image Size (HxW): {self.color_image.shape[:2]}")
+                # print(f"Calc 'width' used: {width}")
+                # print(f"Indices 1D (min/max): {indices_1d.min()} / {indices_1d.max()}")
+                # print(f"PointCloud Size (N): {self.pc.shape[0]}")
+                # # -------------
+                # valid_mask = indices_1d < max_pc_size
+                # indices_1d = indices_1d[valid_mask]
+                
+                # # Se non ci sono punti validi dopo il filtro, salta questo oggetto
+                # print(f"indices_1d {indices_1d}")
+                # if len(indices_1d) == 0:
+                #     continue
+
+                # # Ora l'accesso è sicuro
+                # cropped_vtx = self.pc[indices_1d[::10]]
+                # # --- FINE MODIFICA ---
+
+                #pcmask = (cropped_vtx[:,0] != 0) | (cropped_vtx[:,1] != 0) | (cropped_vtx[:,2] != 0)
 
                 # Only considering point clouds with more than 10 points - if not open3d functions tend to fail
                 if len(cropped_vtx)>10:
@@ -176,7 +212,7 @@ class Realsense(Node):
                         avg_color=np.flip(avg_color)
                         distances = np.linalg.norm(colors_array - avg_color, axis=1)
                         closest_color_name = list(colors.keys())[np.argmin(distances)]
-                        colorid = self.COLOR_TO_IDX[closest_color_name]
+                        colorid = self.COLOR_TO_IDX["green"]#self.COLOR_TO_IDX[closest_color_name]
                         print(closest_color_name)
 
                         # Create o3d point cloud
@@ -187,12 +223,12 @@ class Realsense(Node):
                         # Filter point cloud
                         cloudo3d.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05,max_nn=30))
                         cloudo3d.orient_normals_consistent_tangent_plane(100)
-                        normal_threshold = 0.4
+                        normal_threshold = 0.1
                         normals = np.asarray(cloudo3d.normals)
                         indices = np.where(np.abs(normals[:,2])>normal_threshold)[0]
                         filt_pcd = cloudo3d.select_by_index(indices)
 
-                        labels = np.array(filt_pcd.cluster_dbscan(eps=0.05,min_points=10, print_progress=False))
+                        labels = np.array(filt_pcd.cluster_dbscan(eps=0.15,min_points=5, print_progress=False))
 
                         unique_labels, counts = np.unique(labels[labels !=-1], return_counts=True)
 
@@ -210,7 +246,8 @@ class Realsense(Node):
                             puntos = np.asarray(filtered_pcd.points)
                             centroid = puntos.mean(axis=0)
 
-                            category = self.category_dict.get(int(classes[i].item()), 'None')
+                            category = prompt_to_class[self.names[int(classes[i])]]#self.category_dict.get(int(classes[i].item()), 'None')
+                            print(f"category {category}")
                             objetos.append(category)
                             
                             obj = DetectedObject()
@@ -220,9 +257,12 @@ class Realsense(Node):
                                 [Point32(x=centroid[0], y=centroid[1], z=0.0),
                             ])
                             detected_objects.objects.append(obj)
-
+                        else:
+                            print("Nuvola di punti troppo sparsa")
                     except Exception as e:
                         print(f"ERROR: {type(e).__name__} - {e}")
+                else:
+                    print("Pochi punti")
                 #print(len(objetos))
                 if objetos:
                     # Publish all detected objects together
@@ -243,12 +283,16 @@ class Realsense(Node):
                 return
 
             # YOLO application - specify the object classes to be detected in 'classes'. If the parameter is not included, all classes are considered. 
-            results_bottle = self.model.track(self.color_image, persist=True, device="cpu", classes=[39], show=False, conf=0.5) #classes=[24,25,26,27,28,32,39,40,41,42,43,44,45,46,47,48,49,56,57,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79])
-            results_ball = self.model.track(self.color_image, persist=True, device="cpu", classes=[32], show=False, conf=0.3)
+            # results_bottle = self.model.track(self.color_image, persist=True, device="cpu", classes=["bottle"], show=False, conf=0.5)
+            # results_ball = self.model.track(self.color_image, persist=True, device="cpu", classes=["ball"], show=False, conf=0.3)
+            print(f"Image shape before prediction: {self.color_image.shape}")
+            results_ = self.model.predict(self.color_image, conf=0.15, imgsz=800)
+
             #results_ball = self.model.track(self.color_image, persist=True, device="cpu", classes=[39,32], show=True, conf=0.)
             
-            self.detect_and_publish(results_bottle)
-            self.detect_and_publish(results_ball)
+            self.detect_and_publish(results_)
+            #self.detect_and_publish(results_bottle)
+            #self.detect_and_publish(results_ball)
 
             # Point cloud cropping using detected masks
             # if results[0].masks is not None:

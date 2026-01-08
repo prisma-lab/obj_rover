@@ -9,7 +9,7 @@
             
             <!-- Metodo 2 (alternativo): Usa l'IP dell'interfaccia -->
             <Interfaces>
-                <NetworkInterface address="192.168.3.10" priority="default" multicast="default" />
+                <NetworkInterface address="192.168.2.10" priority="default" multicast="default" />
             </Interfaces>
             
             <AllowMulticast>true</AllowMulticast>

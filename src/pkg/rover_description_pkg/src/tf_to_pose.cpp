@@ -32,7 +32,7 @@ private:
     geometry_msgs::msg::TransformStamped transformStamped;
     try {
       // Otteniamo la trasformazione da "map" a "base_link"
-      transformStamped = tf_buffer_->lookupTransform("rover/map", "rover/base_link", tf2::TimePointZero);
+      transformStamped = tf_buffer_->lookupTransform("map", "rover/base_link", tf2::TimePointZero);
     } catch (const tf2::TransformException & ex) {
       RCLCPP_WARN(this->get_logger(), "Impossibile ottenere la trasformazione: %s", ex.what());
       return;
@@ -41,7 +41,7 @@ private:
     // Convertiamo la trasformazione in una PoseStamped
     geometry_msgs::msg::PoseStamped pose_msg;
     pose_msg.header.stamp = this->now();
-    pose_msg.header.frame_id = "rover/map"; // Il frame target
+    pose_msg.header.frame_id = "map"; // Il frame target
     pose_msg.pose.position.x = transformStamped.transform.translation.x;
     pose_msg.pose.position.y = transformStamped.transform.translation.y;
     pose_msg.pose.position.z = transformStamped.transform.translation.z;

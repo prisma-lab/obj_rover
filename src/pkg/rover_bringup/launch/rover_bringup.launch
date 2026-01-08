@@ -2,18 +2,15 @@
 
   <include file="$(find-pkg-share rover_description_pkg)/launch/new_rover_description.launch.py"/>
   <include file="$(find-pkg-share roboclaw_ros2)/launch/diffdrive.launch"/>
-  <!-- <include file="$(find-pkg-share rover_bringup)/launch/rplidar_s1.launch.py"/> -->
 
   <include file="$(find-pkg-share rover_bringup)/launch/rs_camera.launch.py"/>
   <include file="$(find-pkg-share rover_bringup)/launch/livox_launch.py"/>
 
-  <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
-    args="0.0 2.0 0 0 0 0 map rover/map" />
+  <!-- <include file="$(find-pkg-share rover_bringup)/launch/lidar_odometry.launch.py"/> -->
 
-  <!-- <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
-    args="2.20 7.78 0 0 0 0 rover/odom rover/base_footprint" /> -->
-  <!-- <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
-    args="0 3.0 0 0 0 0 map drone/map" /> -->
+
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_rover_map_tf" 
+    args="0.0 0.0 0 0 0 0 map rover/map" />
 
   <include file="$(find-pkg-share rover_bringup)/launch/rtabmap.launch.py"/>
 
@@ -21,12 +18,11 @@
     <arg name="namespace" value="rover"/>
   </include>
 
-  <include file="$(find-pkg-share aruco_detector_ocv_ros2)/launch/detector_launch.py"/>
+  <!-- <include file="$(find-pkg-share aruco_detector_ocv_ros2)/launch/detector_launch.py"/>
   <include file="$(find-pkg-share yolov11_ros2)/launch/yolo.launch.py"/>
-  <include file="$(find-pkg-share rover_manager)/launch/manager.launch.py"/>
-
-
-
+  <include file="$(find-pkg-share rover_manager)/launch/manager.launch.py"/> -->
+  
+  <node pkg="rover_description_pkg" exec="tf_to_pose_node" name="tf_to_pose"/> 
 
 
 </launch>

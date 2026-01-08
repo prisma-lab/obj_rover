@@ -80,6 +80,12 @@ RUN pip3 install -q -U google-generativeai
 
 RUN pip3 install "numpy<2.0"
 
+# Installaazione per CLIP
+
+RUN pip3 install ftfy regex tqdm
+
+RUN pip3 install git+https://github.com/openai/CLIP.git
+
 #RUN export GZ_SIM_RESOURCE_PATH=~/ros2_ws/src/ros2_iiwa/iiwa_description/gazebo/models
 ENV GZ_SIM_RESOURCE_PATH=~/ros2_ws/src/ros2_iiwa/iiwa_description/gazebo/models
 
