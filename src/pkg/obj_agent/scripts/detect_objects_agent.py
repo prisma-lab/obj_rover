@@ -84,8 +84,11 @@ colors = {
     }
 colors_array = np.array(list(colors.values()))
 
-prompt_to_class = {"carpenter hammer with wooden handle": "hammer",
-                   "screwdriver yellow handle silver flathead tip long chrome shaft vertical": "screwdriver"}
+prompt_to_class = {"rectangular black hard plastic power tool case with handle": "toolbox",
+                   #"toolbox": "toolbox",
+                   "cylindrical lubricant spray can with plastic cap": "spray can",
+                   "spray can": "spray can",
+                   }
 
 class Realsense(Node):
 
@@ -118,7 +121,7 @@ class Realsense(Node):
 
         # YOLO setup
         self.model = YOLOE("/home/user/ros2_ws/src/pkg/obj_agent/scripts/yoloe-11s-seg.pt")
-        self.names = ["carpenter hammer with wooden handle", "screwdriver yellow handle silver flathead tip long chrome shaft vertical"]#["bottle", "ball"]
+        self.names = ["rectangular black hard plastic power tool case with handle", "cylindrical lubricant spray can with plastic cap", "spray can"]#["bottle", "ball"]
         self.model.set_classes(self.names)
 
         #args = dict(model="yolo11n-seg.pt", source=ASSETS)
@@ -286,7 +289,7 @@ class Realsense(Node):
             # results_bottle = self.model.track(self.color_image, persist=True, device="cpu", classes=["bottle"], show=False, conf=0.5)
             # results_ball = self.model.track(self.color_image, persist=True, device="cpu", classes=["ball"], show=False, conf=0.3)
             print(f"Image shape before prediction: {self.color_image.shape}")
-            results_ = self.model.predict(self.color_image, conf=0.15, imgsz=800)
+            results_ = self.model.predict(self.color_image, conf=0.35, imgsz=800)
 
             #results_ball = self.model.track(self.color_image, persist=True, device="cpu", classes=[39,32], show=True, conf=0.)
             

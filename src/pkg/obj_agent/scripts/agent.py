@@ -22,6 +22,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from cv_bridge import CvBridge
 import math
 import time
+import random
 
 save_log = False
 log_dict = {'map_step': [], 'fov_step': [], 'attention_maps_step': [], 'attention_weights_step': []}
@@ -63,8 +64,8 @@ class AgentNode(Node):
         # Variable initialization
         self.custom_resolution = 0.43  # meters per "step" (grid cell size)
         self.objects = []
-        self.locations = []
-        self.obj = []
+        # self.locations = [] # Unused
+        # self.obj = [] # Unused
         self.map = None
         self.resized_map = None
         self.origin = None
@@ -77,14 +78,13 @@ class AgentNode(Node):
         self.map_ready = False
 
         self.is_navigating = False
-        self.kalman_init_steps = 3
+        self.kalman_init_steps = 1#3
         self.tasks = tasks
         self.mission = tasks[0]#'go to the green box'
         print(f"Mission: {self.mission}")
         self.mission_index = 0
 
-        self.CLASS_TO_IDX = {"hammer": 7, "screwdriver": 6}#{"ball": 6, "bottle": 7}
-        #self.COLOR_TO_IDX = {"red": 11, "green": 12, "blue": 13, "purple": 14, "yellow": 15, "gray": 16}
+        self.CLASS_TO_IDX = {"toolbox": 7, "spray can": 6}
         self.COLOR_TO_IDX = {"red": 0, "green": 1, "blue": 2, "purple": 3, "yellow": 4, "gray": 5}
         self.IDX_TO_COLOR = dict(zip(self.COLOR_TO_IDX.values(), self.COLOR_TO_IDX.keys()))
         self.real_map_grid_mapping = {
@@ -151,17 +151,15 @@ class AgentNode(Node):
         self.get_logger().info('Done!')
 
     # -------------------------
-    # Helpers (NEW)
+    # Helpers
     # -------------------------
     def _yaw_from_zw(self, z, w):
-        # Planar yaw from quaternion with x=y=0
         return 2.0 * math.atan2(z, w)
 
     def _wrap_to_pi(self, a):
         return (a + math.pi) % (2.0 * math.pi) - math.pi
 
     def _quantize_yaw_90(self, yaw):
-        # snap to nearest multiple of 90 deg
         candidates = [0.0, math.pi / 2.0, math.pi, -math.pi / 2.0]
         yaw = self._wrap_to_pi(yaw)
         best = min(candidates, key=lambda c: abs(self._wrap_to_pi(yaw - c)))
@@ -173,11 +171,47 @@ class AgentNode(Node):
         w = math.cos(yaw * 0.5)
         return z, w
 
+    def serialize_object(self, obj):
+        # NOTE: This returns position in METERS from the ROS message
+        return {
+            'cls': str(obj.cls),
+            'trackID': int(obj.trackid),
+            'pos2D': [obj.pos2d.points[0].x, obj.pos2d.points[0].y] 
+        }
+
+    def meters_to_px(self, coord_m, ori, h):
+        # Converte metri -> pixel griglia corrente
+        return [
+            (
+                round((y - ori[1]) / self.custom_resolution),
+                round(h - ((x - ori[0]) / self.custom_resolution))
+            )
+            for x, y in coord_m
+        ]
+
+    def refresh_object_pixel_positions(self):
+        """
+        Ricalcola la posizione pos2D (pixel) di tutti gli oggetti 
+        basandosi sulla loro real_pos (metri) e sulla mappa attuale.
+        Da chiamare quando la mappa cambia o prima di generare l'osservazione.
+        """
+        if self.resized_map is None or self.origin is None:
+            return
+
+        h = self.resized_map.shape[1] # Nota: shape[1] è width nel tuo uso di meters_to_px, verifica orientamento
+        # In meters_to_px usi shape[1] come altezza logica per l'inversione asse X.
+        
+        for obj in self.objects:
+            if "real_pos" in obj:
+                # real_pos è (2,) numpy array o list
+                px_coords = self.meters_to_px([obj["real_pos"]], self.origin, h)
+                # Aggiorna il valore pixel per la visualizzazione/logica corrente
+                obj["pos2D"] = (px_coords[0][1], px_coords[0][0])
+
     # -------------------------
     # Callbacks
     # -------------------------
     def set_direction(self):
-        # Use ONLY pose_from_topic to set direction; do not overwrite any "ideal" state.
         if self.pose_from_topic is None:
             return
         z = self.pose_from_topic[2]
@@ -203,56 +237,52 @@ class AgentNode(Node):
         self.set_direction()
 
     def objects_callback(self, msg):
-        if self.map:
-            for obj in msg.objects:
-                obj_ = self.serialize_object(obj)
-                current_pos = obj_["pos2D"]
-                distances = np.linalg.norm(
-                    np.array(current_pos) - np.array([o["real_pos"] for o in self.objects]),
-                    axis=1
-                ) if self.objects else np.array([])
+        # Non processare se non abbiamo una mappa (perchè non sapremmo convertirli in pixel inizialmente)
+        # Ma è meglio salvare il dato grezzo in metri comunque.
+        if not self.map:
+            return
 
-                if distances.size == 0 or not np.any(distances < self.custom_resolution * 3 / 2):
-                    positions_m = [obj_["pos2D"]]
-                    positions_px = self.meters_to_px(positions_m, self.origin, self.resized_map.shape[1])
-                    self.objects.append({
-                        "id": self.CLASS_TO_IDX[obj_['cls']],
-                        "color": obj_['trackID'],
-                        "pos2D": (positions_px[0][1], positions_px[0][0]),
-                        'kf': KalmanFilterPositionOnly(),
-                        'detection_steps': 1,
-                        'real_pos': current_pos
-                    })
-                    self.objects[-1]['kf'].predict()
-                    self.objects[-1]['kf'].update(obj_["pos2D"])
-                else:
-                    index = np.argmin(distances)
-                    self.objects[index]["detection_steps"] += 1
-                    self.objects[index]["kf"].predict()
-                    self.objects[index]["kf"].update(obj_["pos2D"])
-                    self.objects[index]["real_pos"] = self.objects[index]["kf"].get_state()
-                    positions_px = self.meters_to_px([obj_["pos2D"]], self.origin, self.resized_map.shape[1])
-                    self.objects[index]["pos2D"] = (positions_px[0][1], positions_px[0][0])
+        for obj in msg.objects:
+            obj_ = self.serialize_object(obj) # pos2D qui è in METRI
+            current_pos_meters = obj_["pos2D"]
+            
+            distances = np.linalg.norm(
+                np.array(current_pos_meters) - np.array([o["real_pos"] for o in self.objects]),
+                axis=1
+            ) if self.objects else np.array([])
+
+            if distances.size == 0 or not np.any(distances < self.custom_resolution):
+                # Nuovo oggetto
+                new_obj = {
+                    "id": self.CLASS_TO_IDX[obj_['cls']],
+                    "color": obj_['trackID'],
+                    'kf': KalmanFilterPositionOnly(),
+                    'detection_steps': 1,
+                    'real_pos': current_pos_meters # IMPORTANTE: salviamo la posizione reale
+                }
+                # Inizializza KF con misura in metri
+                new_obj['kf'].predict()
+                new_obj['kf'].update(current_pos_meters)
+                self.objects.append(new_obj)
+            else:
+                # Aggiorna oggetto esistente
+                index = np.argmin(distances)
+                self.objects[index]["detection_steps"] += 1
+                self.objects[index]["kf"].predict()
+                self.objects[index]["kf"].update(current_pos_meters)
+                # Aggiorna la posizione reale stimata dal filtro
+                self.objects[index]["real_pos"] = self.objects[index]["kf"].get_state()
+
+            # NOTA: Non calcoliamo "pos2D" (pixel) qui. 
+            # Lo faremo on-demand in refresh_object_pixel_positions() 
+            # per garantire che sia coerente con la mappa corrente.
 
     def map_callback(self, msg):
         self.map = msg
         self.map_processing()
-
-    def serialize_object(self, obj):
-        return {
-            'cls': str(obj.cls),
-            'trackID': int(obj.trackid),
-            'pos2D': [obj.pos2d.points[0].x, obj.pos2d.points[0].y]
-        }
-
-    def meters_to_px(self, coord_m, ori, h):
-        return [
-            (
-                round((y - ori[1]) / self.custom_resolution),
-                round(h - ((x - ori[0]) / self.custom_resolution))
-            )
-            for x, y in coord_m
-        ]
+        # Appena la mappa cambia, aggiorniamo i pixel degli oggetti per sicurezza
+        if self.resized_map is not None:
+            self.refresh_object_pixel_positions()
 
     def map_processing(self):
         if self.map and self.is_navigating is False:
@@ -275,30 +305,55 @@ class AgentNode(Node):
             self.resized_map = cv2.resize(map_matrix, new_size, interpolation=cv2.INTER_NEAREST)
 
     def policy_movement(self, command, cur_yaw_q, cur_x_m, cur_y_m, step):
+        # 1. Gestione Orientamento (Goal Yaw)
         goal_yaw = cur_yaw_q
+        
         if command == 1:      # right
-            self.get_logger().info('Moving right...')
+            self.get_logger().info('Turning right...')
             goal_yaw = self._wrap_to_pi(cur_yaw_q - math.pi / 2.0)
         elif command == 0:    # left
-            self.get_logger().info('Moving left...')
+            self.get_logger().info('Turning left...')
             goal_yaw = self._wrap_to_pi(cur_yaw_q + math.pi / 2.0)
         elif command == 2:    # forward
             goal_yaw = cur_yaw_q
 
         goal_z, goal_w = self._quat_zw_from_yaw(goal_yaw)
 
-        # Decide goal position:
-        # - turn: keep current x,y (rotate in place)
-        # - forward: step along current heading in map frame
-        if command in [0, 1]:  # left/right
-            goal_x = cur_x_m
-            goal_y = cur_y_m
-        elif command == 2:     # forward
-            self.get_logger().info('Moving forward...')
-            goal_x = cur_x_m + step * math.cos(cur_yaw_q)
-            goal_y = cur_y_m + step * math.sin(cur_yaw_q)
-        elif command == 6:
-            self.get_logger().info('Done')
+        # 2. Gestione Posizione (Goal X, Y)
+        goal_x = cur_x_m
+        goal_y = cur_y_m
+
+        if command == 2:  # FORWARD
+            self.get_logger().info(f'Moving forward ({self.direction})...')
+
+            if self.resized_map is None or self.origin is None:
+                self.get_logger().warn("Mappa non pronta.")
+                return -1
+
+            map_width_px = self.resized_map.shape[1]
+
+            cur_grid_y = round(-self.origin[1] / self.custom_resolution + cur_y_m / self.custom_resolution)
+            cur_grid_x = round((map_width_px + self.origin[0] / self.custom_resolution) - cur_x_m / self.custom_resolution)
+
+            target_grid_x = cur_grid_x
+            target_grid_y = cur_grid_y
+
+            if self.direction == 'right':
+                target_grid_x += 1
+            elif self.direction == 'left':
+                target_grid_x -= 1
+            elif self.direction == 'up':
+                target_grid_y -= 1
+            elif self.direction == 'down':
+                target_grid_y += 1
+
+            goal_y = target_grid_y * self.custom_resolution + self.origin[1]
+            goal_x = (map_width_px * self.custom_resolution + self.origin[0]) - (target_grid_x * self.custom_resolution)
+
+            self.get_logger().info(f"Grid: [{cur_grid_x},{cur_grid_y}] -> [{target_grid_x},{target_grid_y}]")
+
+        elif command == 6: # Done
+            self.get_logger().info('Mission Done')
             self.reset_agent_memory()
             if self.mission_index < len(self.tasks) - 1:
                 self.mission_index += 1
@@ -308,12 +363,10 @@ class AgentNode(Node):
                 self.mission = input("Enter new mission: ")
                 print(self.mission)
             return -1
-        else:
-            self.get_logger().info('Invalid command...')
+        
+        elif command not in [0, 1, 2]: # Invalid
             return -1
         
-        #self.get_logger().info(f"Sending goal: x={goal_x:.3f}, y={goal_y:.3f}, yaw={goal_yaw:.3f}")
-
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = 'map'
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
@@ -323,19 +376,17 @@ class AgentNode(Node):
         goal_msg.pose.pose.orientation.w = float(goal_w)
 
         self.is_navigating = True
-        send_goal_future = self.client.send_goal_async(goal_msg)
-        send_goal_future.add_done_callback(self.goal_response_callback)
+        self.client.send_goal_async(goal_msg).add_done_callback(self.goal_response_callback)
         self.map_ready = False
-
         return 1
 
     def agent_call(self):
-        print(self.direction)
+        #print(self.direction)
         if not self.direction:
             return
 
         if self.map and (self.is_navigating is False):
-            time.sleep(1)
+            # time.sleep(1) # Rimosso per fluidità, se necessario riabilitalo
             if self.pose_from_topic is None:
                 return
             if self.origin is None or self.resized_map is None:
@@ -343,13 +394,16 @@ class AgentNode(Node):
 
             self.get_logger().info('Calculating step...')
 
+            # 1. AGGIORNAMENTO CRUCIALE: Ricalcola i pixel degli oggetti sulla mappa ATTUALE
+            self.refresh_object_pixel_positions()
+
             # Use real pose (meters)
             cur_x_m = float(self.pose_from_topic[0])
             cur_y_m = float(self.pose_from_topic[1])
             cur_yaw = self._yaw_from_zw(self.pose_from_topic[2], self.pose_from_topic[3])
             cur_yaw_q = self._quantize_yaw_90(cur_yaw)
 
-            # Build grid for observation (unchanged logic, but based on pose_from_topic)
+            # Build grid for observation
             robot_px = [
                 round(-self.origin[1] / self.custom_resolution + cur_y_m / self.custom_resolution),
                 round((self.resized_map.shape[1] + self.origin[0] / self.custom_resolution) - cur_x_m / self.custom_resolution)
@@ -360,10 +414,9 @@ class AgentNode(Node):
             flipped_map[flipped_map == -1.0] = 0
 
             agent_y, agent_x = robot_px
-
+            # ... (logica di visualizzazione rot e marker invariata) ...
             marker = ""
             rot = 0
-            objects_in_fov = []
             offset = self.view_size // 2
 
             if self.direction == 'right':
@@ -389,9 +442,11 @@ class AgentNode(Node):
 
             sub_matrix = np.zeros((self.view_size, self.view_size))
             obj_pos_sub_matrix = np.zeros((self.view_size, self.view_size))
+            objects_in_fov = []
 
             obj_fov_id = 1
             for obj in self.objects:
+                # obj["pos2D"] ora è garantito essere aggiornato rispetto alla mappa corrente
                 if (
                     obj["detection_steps"] >= self.kalman_init_steps and
                     obj["pos2D"][1] - view_y >= 0 and
@@ -403,33 +458,26 @@ class AgentNode(Node):
                     obj_fov_id += 1
                     objects_in_fov.append(obj)
 
-            #start_x = abs(view_x) if view_x < 0 else 0
-            #end_x = self.view_size - abs(view_x) if view_x + self.view_size > flipped_map.shape[1] else self.view_size
-            #start_y = abs(view_y) if view_y < 0 else 0
-            #end_y = self.view_size - abs(view_y) if view_y + self.view_size > flipped_map.shape[0] else self.view_size
-            
-            # Calcolo robusto dei bordi per X
+            # Calcolo bordi robusto
             if view_x < 0:
                 start_x = abs(view_x)
                 end_x = self.view_size
             elif view_x + self.view_size > flipped_map.shape[1]:
                 start_x = 0
-                end_x = flipped_map.shape[1] - view_x # Correzione: differenza tra larghezza mappa e pos agente
+                end_x = flipped_map.shape[1] - view_x
             else:
                 start_x = 0
                 end_x = self.view_size
 
-            # Calcolo robusto dei bordi per Y
             if view_y < 0:
                 start_y = abs(view_y)
                 end_y = self.view_size
             elif view_y + self.view_size > flipped_map.shape[0]:
                 start_y = 0
-                end_y = flipped_map.shape[0] - view_y # Correzione: differenza tra altezza mappa e pos agente
+                end_y = flipped_map.shape[0] - view_y
             else:
                 start_y = 0
                 end_y = self.view_size
-
 
             sub_matrix[start_y:end_y, start_x:end_x] += flipped_map[
                 view_y + start_y:view_y + end_y,
@@ -446,6 +494,7 @@ class AgentNode(Node):
                                vmin=0, vmax=255)
                 for obj in self.objects:
                     if obj["detection_steps"] >= self.kalman_init_steps:
+                        # Usa i pixel ricalcolati
                         self.ax.scatter(
                             obj["pos2D"][0] + 0.5,
                             obj["pos2D"][1] + 0.5,
@@ -463,15 +512,9 @@ class AgentNode(Node):
                 self.fig.canvas.draw()
                 w, h = self.fig.canvas.get_width_height()
                 img_numpy = np.frombuffer(self.fig.canvas.tostring_rgb(), dtype=np.uint8).reshape((h, w, 3))
-                print("\n----------\nvisualization\n---------\n")
                 self.grid_pub.publish(self.bridge.cv2_to_imgmsg(img_numpy))
-                if save_log:
-                    log_dict['map_step'].append(flipped_map)
                 self.map_ready = True
                 self.ax.clear()
-            else:
-                if save_log:
-                    log_dict['map_step'].append(None)
 
             # Build observation for policy
             obs = np.zeros((self.view_size, self.view_size, 3))
@@ -485,12 +528,10 @@ class AgentNode(Node):
                 obs[rotated_obj_pos == obj_fov_id, 0] = obj["id"]
                 obs[rotated_obj_pos == obj_fov_id, 1] = obj["color"]
                 obj_fov_id += 1
-            print(f"---- OBS {obs[:, :, 0]} ---")
-            print(f"---- COLOR {obs[:, :, 1]} ---")
-            next_obs = {'image': np.array([obs]),
-                        'mission': (self.mission,)}
-
-            #goal_yaw = cur_yaw_q
+            
+            next_obs = {'image': np.array([obs]), 'mission': (self.mission,)}
+            # print(f"next obs {next_obs}")
+            print(obs[:, :, 0])
             step = float(self.custom_resolution)
 
             if self.use_learned_policy and self.map_ready:
@@ -504,65 +545,11 @@ class AgentNode(Node):
                 )
                 
                 command = int(actions[0].item())
-                print(actions, len(actions))
                 print(f"------ Command {command} ------")
-                #step = float(self.custom_resolution)
 
-                # Decide goal yaw (discrete) based on current yaw
-                #goal_yaw = cur_yaw_q
                 if self.policy_movement(command, cur_yaw_q, cur_x_m, cur_y_m, step) == -1:
                     return
-                # if command == 1:      # right
-                #     self.get_logger().info('Moving right...')
-                #     goal_yaw = self._wrap_to_pi(cur_yaw_q - math.pi / 2.0)
-                # elif command == 0:    # left
-                #     self.get_logger().info('Moving left...')
-                #     goal_yaw = self._wrap_to_pi(cur_yaw_q + math.pi / 2.0)
-                # elif command == 2:    # forward
-                #     goal_yaw = cur_yaw_q
-
-                # goal_z, goal_w = self._quat_zw_from_yaw(goal_yaw)
-
-                # # Decide goal position:
-                # # - turn: keep current x,y (rotate in place)
-                # # - forward: step along current heading in map frame
-                # if command in [0, 1]:  # left/right
-                #     goal_x = cur_x_m
-                #     goal_y = cur_y_m
-                # elif command == 2:     # forward
-                #     self.get_logger().info('Moving forward...')
-                #     goal_x = cur_x_m + step * math.cos(cur_yaw_q)
-                #     goal_y = cur_y_m + step * math.sin(cur_yaw_q)
-                # elif command == 6:
-                #     self.get_logger().info('Done')
-                #     self.reset_agent_memory()
-                #     if self.mission_index < len(self.tasks) - 1:
-                #         self.mission_index += 1
-                #         self.mission = self.tasks[self.mission_index]
-                #         print(f"Mission: {self.mission}")
-                #     else:
-                #         self.mission = input("Enter new mission: ")
-                #         print(self.mission)
-                #     return
-
-                # self.get_logger().info(f"Sending goal: x={goal_x:.3f}, y={goal_y:.3f}, yaw={goal_yaw:.3f}")
-
-                # goal_msg = NavigateToPose.Goal()
-                # goal_msg.pose.header.frame_id = 'map'
-                # goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-                # goal_msg.pose.pose.position.x = float(goal_x)
-                # goal_msg.pose.pose.position.y = float(goal_y)
-                # goal_msg.pose.pose.orientation.z = float(goal_z)
-                # goal_msg.pose.pose.orientation.w = float(goal_w)
-
-                # self.is_navigating = True
-                # send_goal_future = self.client.send_goal_async(goal_msg)
-                # send_goal_future.add_done_callback(self.goal_response_callback)
-                # self.map_ready = False
             else:
-                # if self.pose_from_topic is not None:
-                #     self.set_direction()
-                #self.use_learned_policy = True
                 if self.init_count < 4:
                     self.get_logger().info(f"Waiting...")
                     time.sleep(3)
@@ -570,7 +557,6 @@ class AgentNode(Node):
                     self.init_count += 1
                 else:
                     self.use_learned_policy = True
-                
 
     def reset_agent_memory(self):
         self.next_lstm_state = (
@@ -584,31 +570,20 @@ class AgentNode(Node):
             self.get_logger().info('Goal rejected')
             self.is_navigating = False
             return
-
-        self.get_logger().info('Goal accepted, waiting for result...')
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.result_callback)
 
     def result_callback(self, future):
         result = future.result()
         self.is_navigating = False
-
         if result.status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info('Goal succeeded!')
-        elif result.status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().info('Goal aborted!')
-        elif result.status == GoalStatus.STATUS_REJECTED:
-            self.get_logger().info('Goal rejected!')
-        elif result.status == GoalStatus.STATUS_CANCELED:
-            self.get_logger().info('Goal canceled!')
-        else:
-            self.get_logger().info(f'Goal failed with status: {result.status}')
-
+        elif result.status != GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info(f'Goal failed/canceled: {result.status}')
 
 def main(args=None):
     rclpy.init(args=args)
     agent_node = AgentNode(tasks=['go to the green ball', 'go to the green box'], use_learned_policy=False)
-
     try:
         rclpy.spin(agent_node)
     except KeyboardInterrupt:
@@ -617,6 +592,9 @@ def main(args=None):
         agent_node.destroy_node()
         rclpy.shutdown()
 
-
 if __name__ == '__main__':
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
     main()
